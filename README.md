@@ -1,0 +1,2 @@
+Similar to the Tokkio reference workflow for interactive avatars, but as a semi-monolithic service in plain and simple Python.
+This backend relies on NIM service APIs, defaulting to those from api.nvidia.com. A key will need to be configured and you will need sufficient credits.

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Virtual Avatar with NVCF Demo</title>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+        import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
+
+        let width = window.innerWidth - 200 - 8;
+        let height = window.innerHeight;
+
+        const renderer = new THREE.WebGLRenderer();
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1;
+        renderer.setSize(width, height);
+        document.body.prepend(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(25, width / height, 0.01, 10);
+        camera.position.set(0, 1.55, 0.75);
+        camera.lookAt(0, 1.55, 0);
+
+        const renderLoop = () => {
+            requestAnimationFrame(renderLoop);
+            renderer.render(scene, camera);
+        };
+        renderLoop();
+
+        new GLTFLoader().load('/assets/model.glb', (gltf) => {
+            const model = gltf.scene;
+            scene.add(model);
+            window.model = model;
+        });
+
+        const light = new THREE.AmbientLight(0x409CFF, 1);
+        scene.add(light);
+
+        new EXRLoader().load('assets/forest.exr', function (texture) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            scene.environment = texture;
+            scene.background = texture;
+            scene.backgroundBlurriness = 0.3;
+        });
+
+        window.applyAnim = (anim) => {
+            const lowerFirstLetterKeys = obj => Object.fromEntries(Object.entries(obj).map(([key, value]) => [key[0].toLowerCase() + key.slice(1), value]));
+            const sharedKeys = (obj1, obj2) => new Set(Object.keys(obj1).filter(key => key in obj2));
+
+            anim.blendShapes = lowerFirstLetterKeys(anim.blendShapes);
+            model.traverse((child) => {
+                if (child.isMesh && child.morphTargetInfluences) {
+                    let keys = sharedKeys(child.morphTargetDictionary, anim.blendShapes);
+                    for (let key of keys) {
+                        let index = child.morphTargetDictionary[key];
+                        let value = anim.blendShapes[key];
+                        child.morphTargetInfluences[index] = value;
+                    }
+                }
+            });
+        };
+    </script>
+    <script>
+        let pc;
+        const sessionId = Date.now();
+
+        async function appendLog(message) {
+            document.getElementById('debug').textContent += message + '\n';
+        }
+
+        async function startWebRTC() {
+            appendLog("Starting audio stream...");
+            pc = new RTCPeerConnection({ sdpSemantics: 'unified-plan' });
+
+            const localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            dc = pc.createDataChannel('data', { ordered: true });
+            dc.addEventListener('message', (event) => {
+                let json = JSON.parse(event.data);
+                if (json.kind == 'log') {
+                    appendLog('> ' + json.message);
+                } else if (json.kind == 'anim') {
+                    applyAnim(json.message);
+                }
+            });
+
+            pc.ontrack = (event) => {
+                let remoteStream = event.streams[0];
+                let audioElement = document.getElementById('remoteAudio');
+                audioElement.srcObject = remoteStream;
+            };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await new Promise((resolve) => {
+                function checkState() {
+                    if (pc.iceGatheringState === 'complete') {
+                        pc.removeEventListener('icegatheringstatechange', checkState);
+                        resolve();
+                    }
+                }
+                pc.addEventListener('icegatheringstatechange', checkState);
+                checkState();
+            });
+            const response = await fetch('/offer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sdp: pc.localDescription, session_id: sessionId })
+            });
+            await pc.setRemoteDescription(await response.json());
+            appendLog("Connected to server.");
+        }
+    </script>
+</head>
+
+<body style="display: flex; flex-direction: row; margin: 0;">
+    <div style="display: flex; flex-direction: column;">
+        <button onclick="startWebRTC()">Start Chatting</button>
+        <textarea id="debug" style="width: 200px; height: 100%;"></textarea>
+    </div>
+    <audio id="remoteAudio" autoplay></audio>
+</body>
+
+</html>

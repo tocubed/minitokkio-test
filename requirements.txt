@@ -1,0 +1,4 @@
+aiortc
+nvidia-riva-client
+openai
+./depends/nvidia_ace-1.2.0-py3-none-any.whl
