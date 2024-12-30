@@ -11,13 +11,13 @@ Follow these steps to set up and run the project on your local machine:
 
 ## Prerequisites
 
-This project was tested with **Python 3.11** but may work with other versions. It assumes you have **pip** (included with Python) and **Git** (commonly available for developers).
+This project was tested with **Python 3.11** but may work with other versions. 
 
 ## Installation
 
 1. **Navigate to the Project Directory and Install Requirements**
 
-   After downloading or cloning the project, navigate to its directory and install the dependencies:
+   After downloading or cloning the project, navigate to its directory and install the dependencies. If you cloned the repository, ensure that you have retrieved all files through Git LFS:
    ```bash
    cd <project_directory>
    pip install -r requirements.txt
@@ -44,3 +44,12 @@ This project was tested with **Python 3.11** but may work with other versions. I
 3. **Access the Application**
 
    Once the application is running, open your browser and navigate to the URL displayed in the terminal (e.g., `http://127.0.0.1:5000`).
+
+# TODO
+
+- Fix animation synchronization
+- Fix crash after closing a single connection
+- Test scaling to multiple simultaneous connections
+- Coturn server and further testing in a cloud environment
+- Connect to vision system (there go my credits, unless triggered sparesly and used only for RAG)
+- Code cleanup, edge cases and general polish
