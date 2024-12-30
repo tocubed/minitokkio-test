@@ -83,7 +83,6 @@ async def asr_handler(bus, session_id):
 
 async def tts_handler(bus, session_id):
     tts_service = riva_tts_service()
-    start = time.monotonic()
 
     loop = asyncio.get_running_loop()
     def stream_results(text, interrupt, audio_id):
@@ -98,7 +97,7 @@ async def tts_handler(bus, session_id):
             await bus.publish(f'/sessions/{session_id}/speech_out', frame)
             await bus.publish(f'/sessions/{session_id}/speech_out/id', audio_id)
 
-        pts = int(TTS_SAMPLE_RATE * (time.monotonic() - start))
+        pts = 0
         for res in results:
             if interrupt.is_set(): break
             arr = np.frombuffer(res.audio, dtype=np.int16)
@@ -108,6 +107,7 @@ async def tts_handler(bus, session_id):
             pts += frame.samples
             future = asyncio.run_coroutine_threadsafe(publish(frame), loop)
             future.result()
+
         # silence
         silent_samples = int(TTS_SAMPLE_RATE * TTS_APPEND_SILENCE_MS / 1000)
         frame = av.AudioFrame.from_ndarray(np.zeros((1, silent_samples), dtype=np.int16), format='s16', layout='mono')

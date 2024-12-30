@@ -2,13 +2,16 @@ import aiohttp.web
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc import AudioStreamTrack
 from aiortc.contrib.media import MediaRecorder
+from collections import deque
 import asyncio
 import numpy as np
 import av
 import json
 
+# TODO Priyank: need to rework audio + animation streaming for synchronization.
+
 AUDIO_OUT_CHUNK_SIZE_MS = 20
-AUDIO_OUT_DELAY_MS = 400 # TODO Priyank: a static delay seems to work fine but dynamic sync may be necessary
+AUDIO_OUT_DELAY_MS = 400 
 AUDIO_OUT_SAMPLE_RATE = 48000 # TODO Priyank: this needs to match what webrtc peer expects
 
 def chunk_audio_frame(frame, chunk_size, sample_rate):
@@ -31,14 +34,21 @@ def silent_frame(duration, pts, sample_rate):
     frame.sample_rate = sample_rate
     return frame
 
-async def audio_out_handler(bus, session_id, sample_rate, out_topic=f'audio_out', delay_s=None):
+async def audio_out_handler(bus, session_id, sample_rate):
+    loop = asyncio.get_event_loop()
     queue = bus.subscribe(f'/sessions/{session_id}/speech_out')
     id_queue = bus.subscribe(f'/sessions/{session_id}/speech_out/id')
-    out_topic = f'/sessions/{session_id}/{out_topic}'
+
+    out_topic = f'/sessions/{session_id}/audio_out'
+    out_topic_delayed = f'/sessions/{session_id}/audio_out/delayed'
+    async def bus_publish_delayed(topic, frame, duration):
+        await asyncio.sleep(duration)
+        await bus.publish(topic, frame)
 
     chunk_size = int(sample_rate * AUDIO_OUT_CHUNK_SIZE_MS / 1000)
-    frames = []
+    frames = deque()
     last_audio_id = 0
+    next_pts = 0
     while True:
         while not queue.empty() or len(frames) == 0:
             frame = await queue.get()
@@ -46,13 +56,13 @@ async def audio_out_handler(bus, session_id, sample_rate, out_topic=f'audio_out'
             if audio_id > last_audio_id:
                 frames.clear()
                 last_audio_id = audio_id
-                if delay_s is not None: 
-                    frames += chunk_audio_frame(silent_frame(delay_s, frame.pts, sample_rate), chunk_size, sample_rate)
-            if delay_s is not None: 
-                frame.pts += int(delay_s * sample_rate)
-            frames += chunk_audio_frame(frame, chunk_size, sample_rate)
-        frame = frames.pop(0)
+            if len(frames) > 0: frame.pts = frames[-1].pts + frames[-1].samples
+            else: frame.pts = next_pts
+            frames.extend(chunk_audio_frame(frame, chunk_size, sample_rate))
+        frame = frames.popleft()
         await bus.publish(out_topic, frame)
+        loop.create_task(bus_publish_delayed(out_topic_delayed, frame, duration=AUDIO_OUT_DELAY_MS/1000))
+        next_pts = frame.pts + frame.samples
         duration = frame.samples / sample_rate
         await asyncio.sleep(duration)
 
@@ -120,10 +130,7 @@ class Streaming:
         session_id = params.get('session_id')
         pc = self.pcs[session_id] = RTCPeerConnection()
         pc.addTrack(BusAudioOut(self.bus, session_id))
-        self.audio_handlers[session_id] = {
-            '':  asyncio.create_task(audio_out_handler(self.bus, session_id, sample_rate=AUDIO_OUT_SAMPLE_RATE, out_topic='audio_out')),
-            'delayed':  asyncio.create_task(audio_out_handler(self.bus, session_id, sample_rate=AUDIO_OUT_SAMPLE_RATE, out_topic='audio_out/delayed', delay_s=(AUDIO_OUT_DELAY_MS/1000))),
-        }
+        self.audio_handlers[session_id] = asyncio.create_task(audio_out_handler(self.bus, session_id, sample_rate=AUDIO_OUT_SAMPLE_RATE))
         await self.bus.publish('/session_new', session_id)
 
         @pc.on('track')
