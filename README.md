@@ -5,6 +5,10 @@ Specifically following something similar to Tokkio, but as a semi-monolithic toy
 This heavy lifting is done through NVCF such as RIVA and other NIM-based APIs. More can be found on build.nvidia.com.
 An API key will be needed with sufficient credits to run this.
 
+# Demo
+
+https://github.com/user-attachments/assets/53894f7c-0226-468e-84b8-a908217d21e0
+
 # Installation and Running Instructions
 
 Follow these steps to set up and run the project on your local machine:
