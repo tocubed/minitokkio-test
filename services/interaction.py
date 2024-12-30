@@ -1,9 +1,7 @@
 import asyncio
 import aiohttp
 import os
-import openai
 import json
-from typing import cast
 
 NVAPI_KEY = os.getenv('NVAPI_KEY')
 
