@@ -17,26 +17,3 @@ class Bus:
     def unsubscribe(self, topic, queue):
         if queue in self.subscribers[topic]:
             self.subscribers[topic].remove(queue)
-'''
-# Example Usage
-async def producer(pubsub):
-    while True:
-        await asyncio.sleep(1)
-        await pubsub.publish("topic1", "message")
-
-async def consumer(pubsub, name):
-    queue = pubsub.subscribe("topic1")
-    while True:
-        message = await queue.get()
-        print(f"{name} received: {message}")
-
-async def main():
-    pubsub = PubSub()
-    await asyncio.gather(
-        producer(pubsub),
-        consumer(pubsub, "Consumer 1"),
-        consumer(pubsub, "Consumer 2")
-    )
-
-asyncio.run(main())
-'''

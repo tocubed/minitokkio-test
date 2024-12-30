@@ -9,6 +9,7 @@ NVAPI_KEY = os.getenv('NVAPI_KEY')
 
 ASR_SAMPLE_RATE = 48000
 TTS_SAMPLE_RATE = 48000
+TTS_APPEND_SILENCE_MS = 400
 
 def riva_asr_streaming_response(chunks):
     auth = riva.client.Auth(uri='grpc.nvcf.nvidia.com:443', use_ssl=True, metadata_args=[
@@ -93,6 +94,10 @@ async def tts_handler(bus, session_id):
             sample_rate_hz=TTS_SAMPLE_RATE
         )
 
+        async def publish(frame):
+            await bus.publish(f'/sessions/{session_id}/speech_out', frame)
+            await bus.publish(f'/sessions/{session_id}/speech_out/id', audio_id)
+
         pts = int(TTS_SAMPLE_RATE * (time.monotonic() - start))
         for res in results:
             if interrupt.is_set(): break
@@ -101,11 +106,15 @@ async def tts_handler(bus, session_id):
             frame.pts = pts
             frame.sample_rate = TTS_SAMPLE_RATE
             pts += frame.samples
-            async def update():
-                await bus.publish(f'/sessions/{session_id}/speech_out', frame)
-                await bus.publish(f'/sessions/{session_id}/speech_out/id', audio_id)
-            future = asyncio.run_coroutine_threadsafe(update(), loop)
+            future = asyncio.run_coroutine_threadsafe(publish(frame), loop)
             future.result()
+        # silence
+        silent_samples = int(TTS_SAMPLE_RATE * TTS_APPEND_SILENCE_MS / 1000)
+        frame = av.AudioFrame.from_ndarray(np.zeros((1, silent_samples), dtype=np.int16), format='s16', layout='mono')
+        frame.pts = pts
+        frame.sample_rate = TTS_SAMPLE_RATE
+        future = asyncio.run_coroutine_threadsafe(publish(frame), loop)
+        future.result()
     
     audio_id = 0
     text_out = bus.subscribe(f'/sessions/{session_id}/text_out')

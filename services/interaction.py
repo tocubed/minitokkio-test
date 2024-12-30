@@ -26,7 +26,7 @@ async def interaction_handler(bus, session_id):
                 "messages": messages,
                 "temperature": 0.5,
                 "top_p": 1,
-                "max_tokens": 256,
+                "max_tokens": 128,
                 "stream": True,
             }
             try:

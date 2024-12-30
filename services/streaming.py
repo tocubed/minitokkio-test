@@ -7,12 +7,16 @@ import numpy as np
 import av
 import json
 
-def chunk_audio_frame(frame, chunk_size, sample_rate=48000):
+AUDIO_OUT_CHUNK_SIZE_MS = 20
+AUDIO_OUT_DELAY_MS = 400 # TODO Priyank: a static delay seems to work fine but dynamic sync may be necessary
+AUDIO_OUT_SAMPLE_RATE = 48000 # TODO Priyank: this needs to match what webrtc peer expects
+
+def chunk_audio_frame(frame, chunk_size, sample_rate):
     raw_audio = bytes(frame.planes[0])
-    total_samples = len(raw_audio) // 2  # Each sample is 2 bytes (16-bit PCM)
+    total_samples = len(raw_audio) // 2  # since each sample is 2 bytes (16-bit PCM)
     chunks = []
     for i in range(0, total_samples, chunk_size):
-        chunk_data = raw_audio[i * 2 : (i + chunk_size) * 2]  # Convert samples to bytes range
+        chunk_data = raw_audio[i * 2 : (i + chunk_size) * 2]
         audio_array = np.frombuffer(chunk_data, dtype=np.int16).reshape((1, -1))
         chunk_frame = av.AudioFrame.from_ndarray(audio_array, format='s16', layout='mono')
         chunk_frame.pts = frame.pts + i
@@ -20,35 +24,53 @@ def chunk_audio_frame(frame, chunk_size, sample_rate=48000):
         chunks.append(chunk_frame)
     return chunks
 
+def silent_frame(duration, pts, sample_rate):
+    frame_size = int(duration * sample_rate)
+    frame = av.AudioFrame.from_ndarray(np.zeros((1, frame_size), dtype=np.int16), format='s16', layout='mono')
+    frame.pts = pts
+    frame.sample_rate = sample_rate
+    return frame
+
+async def audio_out_handler(bus, session_id, sample_rate, out_topic=f'audio_out', delay_s=None):
+    queue = bus.subscribe(f'/sessions/{session_id}/speech_out')
+    id_queue = bus.subscribe(f'/sessions/{session_id}/speech_out/id')
+    out_topic = f'/sessions/{session_id}/{out_topic}'
+
+    chunk_size = int(sample_rate * AUDIO_OUT_CHUNK_SIZE_MS / 1000)
+    frames = []
+    last_audio_id = 0
+    while True:
+        while not queue.empty() or len(frames) == 0:
+            frame = await queue.get()
+            audio_id = await id_queue.get() 
+            if audio_id > last_audio_id:
+                frames.clear()
+                last_audio_id = audio_id
+                if delay_s is not None: 
+                    frames += chunk_audio_frame(silent_frame(delay_s, frame.pts, sample_rate), chunk_size, sample_rate)
+            if delay_s is not None: 
+                frame.pts += int(delay_s * sample_rate)
+            frames += chunk_audio_frame(frame, chunk_size, sample_rate)
+        frame = frames.pop(0)
+        await bus.publish(out_topic, frame)
+        duration = frame.samples / sample_rate
+        await asyncio.sleep(duration)
+
 class BusAudioOut(AudioStreamTrack):
     sample_rate = 48000
     def __init__(self, bus, session_id):
         super().__init__()
         self.bus = bus
         self.session_id = session_id
-        self.queue = bus.subscribe(f'/sessions/{session_id}/speech_out')
-        self.id_queue = bus.subscribe(f'/sessions/{session_id}/speech_out/id')
-        self.last_audio_id = 0
-        self.frames = []
+        self.queue = bus.subscribe(f'/sessions/{session_id}/audio_out/delayed')
 
     async def recv(self):
-        while not self.queue.empty() or len(self.frames) == 0:
-            frame = await self.queue.get()
-            audio_id = await self.id_queue.get() 
-            if audio_id > self.last_audio_id:
-                self.frames.clear()
-                self.last_audio_id = audio_id
-            self.frames += chunk_audio_frame(frame, 960, self.sample_rate)
-        frame = self.frames.pop(0)
-        await self.bus.publish(f'/sessions/{self.session_id}/audio_out', frame)
-        duration = frame.samples / self.sample_rate
-        await asyncio.sleep(duration)
+        frame = await self.queue.get()
         return frame
 
     def stop(self):
         super().stop()
-        self.bus.unsubscribe(f'/sessions/{self.session_id}/speech_out', self.queue)
-        self.bus.unsubscribe(f'/sessions/{self.session_id}/speech_out/id', self.id_queue)
+        self.bus.unsubscribe(f'/sessions/{self.session_id}/audio_out/delayed', self.queue)
 
 async def channel_handler(bus, session_id, channel):
     text_in = bus.subscribe(f'/sessions/{session_id}/text_in')
@@ -71,6 +93,7 @@ class Streaming:
         self.bus = bus
         self.pcs = {}
         self.channel_handlers = {}
+        self.audio_handlers = {}
         app = aiohttp.web.Application()
         app.router.add_get('/', self.index)
         app.router.add_post('/offer', self.offer)
@@ -97,6 +120,10 @@ class Streaming:
         session_id = params.get('session_id')
         pc = self.pcs[session_id] = RTCPeerConnection()
         pc.addTrack(BusAudioOut(self.bus, session_id))
+        self.audio_handlers[session_id] = {
+            '':  asyncio.create_task(audio_out_handler(self.bus, session_id, sample_rate=AUDIO_OUT_SAMPLE_RATE, out_topic='audio_out')),
+            'delayed':  asyncio.create_task(audio_out_handler(self.bus, session_id, sample_rate=AUDIO_OUT_SAMPLE_RATE, out_topic='audio_out/delayed', delay_s=(AUDIO_OUT_DELAY_MS/1000))),
+        }
         await self.bus.publish('/session_new', session_id)
 
         @pc.on('track')
